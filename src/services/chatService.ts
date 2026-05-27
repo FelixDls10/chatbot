@@ -32,9 +32,9 @@ interface GeminiContent {
   parts: GeminiPart[];
 }
 
-// URL pública del Estatuto Orgánico
-const PDF_URL =
-  "https://postgrado.uasd.edu.do/wp-content/uploads/2024/06/ESTATUTO-ORGANICO-UASD.pdf";
+// PDF del Estatuto servido desde el mismo dominio (public/estatuto.pdf)
+// import.meta.env.BASE_URL = "/chatbot/" en GitHub Pages
+const PDF_URL = `${import.meta.env.BASE_URL}estatuto.pdf`;
 
 const PDF_CACHE_KEY = "uasd_estatuto_pdf_b64";
 
