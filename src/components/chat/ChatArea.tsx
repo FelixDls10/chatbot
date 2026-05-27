@@ -47,7 +47,7 @@ export default function ChatArea({
           <Menu className="w-5 h-5" aria-hidden="true" />
         </button>
         <img
-          src="/logo-uasd.png"
+          src={`${import.meta.env.BASE_URL}logo-uasd.png`}
           alt="Logo UASD"
           className="w-6 h-6 object-contain ml-2"
         />

@@ -51,7 +51,7 @@ export default function Sidebar({
         {/* Encabezado con logo e identidad */}
         <div className="px-4 py-4 flex items-center gap-3 border-b border-[#E5E5E5] dark:border-[#2F2F2F] shrink-0">
           <img
-            src="/logo-uasd.png"
+            src={`${import.meta.env.BASE_URL}logo-uasd.png`}
             alt="Logo UASD"
             className="w-10 h-10 object-contain shrink-0"
           />

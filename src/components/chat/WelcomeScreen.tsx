@@ -38,7 +38,7 @@ export default function WelcomeScreen({ onSend, isSending }: WelcomeScreenProps)
 
       {/* Logo institucional */}
       <img
-        src="/logo-uasd.png"
+        src={`${import.meta.env.BASE_URL}logo-uasd.png`}
         alt="Logo de la Universidad Autónoma de Santo Domingo"
         className="w-24 h-24 object-contain mb-5 drop-shadow-sm"
       />
