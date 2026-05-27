@@ -1,13 +1,19 @@
 /**
- * Servicio de comunicación con la API de Gemini directamente desde el navegador.
- * Reemplaza la llamada al backend Express para permitir el despliegue en GitHub Pages.
+ * chatService.ts
+ *
+ * Estrategia dual:
+ *  • localhost / 127.0.0.1  → llama al backend Express (/api/chat)
+ *    El servidor carga el PDF oficial del Estatuto en Gemini Files API
+ *    y lo adjunta en cada petición, garantizando respuestas del documento real.
+ *
+ *  • Cualquier otro host (GitHub Pages, etc.) → llama a Gemini directamente
+ *    desde el navegador usando VITE_GEMINI_API_KEY.
  */
 
 import { GoogleGenAI } from "@google/genai";
 import { Message } from "../types";
 import { SYSTEM_INSTRUCTION } from "../constants/systemPrompt";
 import { extractArticles } from "../utils/articleExtractor";
-import { SUGGESTED_QUESTIONS, GROUNDED_ANSWERS } from "../data/statuteKnowledge";
 
 /** Respuesta normalizada que devuelve el servicio. */
 export interface ChatResponse {
@@ -15,69 +21,53 @@ export interface ChatResponse {
   articlesCited?: string[];
 }
 
-interface LocalMatch {
-  question: string;
-  answer: string;
-  articles: string[];
+type GeminiPart = { text: string } | { fileData: { fileUri: string; mimeType: string } };
+interface GeminiContent { role: string; parts: GeminiPart[] }
+
+// Detectar si hay un servidor local corriendo
+const IS_LOCAL =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+
+/* ── 1. Llamada al backend Express (/api/chat) ──────────────────────────── */
+
+async function callBackend(message: string, history: Message[]): Promise<ChatResponse> {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `Error HTTP ${res.status}` }));
+    throw new Error(err.error ?? err.details ?? `Error HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  return { text: data.text, articlesCited: data.articlesCited };
 }
 
-/* ── Cliente Gemini (singleton) ─────────────────────────────────────────── */
+/* ── 2. Llamada directa a Gemini (GitHub Pages / despliegue estático) ───── */
 
-let ai: GoogleGenAI | null = null;
+let _ai: GoogleGenAI | null = null;
 
-function getAI(): GoogleGenAI | null {
-  if (!ai) {
+function getAI(): GoogleGenAI {
+  if (!_ai) {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-    if (apiKey) {
-      ai = new GoogleGenAI({ apiKey });
+    if (!apiKey) {
+      throw new Error(
+        "VITE_GEMINI_API_KEY no está configurada. Agrega la variable al archivo .env.local o al secreto de GitHub Actions."
+      );
     }
+    _ai = new GoogleGenAI({ apiKey });
   }
-  return ai;
+  return _ai;
 }
 
-/**
- * Envía el mensaje del usuario junto con el historial de conversación
- * a la API de Gemini directamente desde el navegador.
- *
- * @param message  - Texto escrito por el usuario.
- * @param history  - Historial previo de la sesión (máx. últimos 10 msgs).
- * @returns        Respuesta del chatbot con texto y artículos citados.
- */
-export async function sendMessage(
-  message: string,
-  history: Message[]
-): Promise<ChatResponse> {
-  const trimmedMsg = message.trim();
+async function callGeminiDirect(message: string, history: Message[]): Promise<ChatResponse> {
+  const ai = getAI();
 
-  // 1. Buscar coincidencia en la base de conocimiento local (preguntas preelaboradas)
-  let localMatch: LocalMatch | null = null;
-
-  for (const item of SUGGESTED_QUESTIONS) {
-    if (
-      trimmedMsg.toLowerCase() === item.question.toLowerCase() ||
-      trimmedMsg.toLowerCase().includes(item.question.toLowerCase())
-    ) {
-      const grounded = GROUNDED_ANSWERS[item.id];
-      if (grounded) {
-        localMatch = {
-          question: item.question,
-          answer: grounded.answer,
-          articles: grounded.articles,
-        };
-        break;
-      }
-    }
-  }
-
-  // 2. Construir contexto de fundamentación cuando hay coincidencia local
-  const groundingContext = localMatch
-    ? `[CONTEXTO OFICIAL] El usuario seleccionó la pregunta: "${localMatch.question}". ` +
-      `Respuesta estatutaria verificada: "${localMatch.answer}". ` +
-      `Cita estos artículos: ${localMatch.articles.join(", ")}.`
-    : "";
-
-  // 3. Convertir historial al formato de Gemini (máximo 10 mensajes previos)
-  const contents: { role: string; parts: { text: string }[] }[] = [];
+  const contents: GeminiContent[] = [];
 
   if (Array.isArray(history)) {
     history.slice(-10).forEach((msg) => {
@@ -88,56 +78,34 @@ export async function sendMessage(
     });
   }
 
-  const currentText = groundingContext
-    ? `${groundingContext}\n\nPregunta del usuario: ${trimmedMsg}`
-    : trimmedMsg;
+  contents.push({ role: "user", parts: [{ text: message.trim() }] });
 
-  contents.push({ role: "user", parts: [{ text: currentText }] });
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents,
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION,
+      temperature: 0.2,
+    },
+  });
 
-  // 4. Llamar a la API de Gemini (con fallback local ante error)
-  const aiClient = getAI();
+  const replyText = response.text ?? "No obtuve una respuesta clara del modelo de IA.";
+  return { text: replyText, articlesCited: extractArticles(replyText) };
+}
 
-  if (aiClient) {
-    try {
-      const response = await aiClient.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.2,
-        },
-      });
+/* ── API pública ────────────────────────────────────────────────────────── */
 
-      const replyText = response.text ?? "No obtuve una respuesta clara del modelo de IA.";
-      const citedArticles = extractArticles(replyText) ?? localMatch?.articles;
-
-      return { text: replyText, articlesCited: citedArticles };
-    } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : "Error desconocido";
-      console.error("Error al llamar a Gemini:", errMsg);
-
-      // Fallback a conocimiento local si Gemini falla
-      if (localMatch) {
-        return {
-          text: `${localMatch.answer}\n\n*(Nota: Respuesta servida localmente por fallo temporal del servicio de IA.)*`,
-          articlesCited: localMatch.articles,
-        };
-      }
-
-      throw new Error(`Error al procesar con Inteligencia Artificial: ${errMsg}`);
-    }
+/**
+ * Envía el mensaje al canal correcto según el entorno:
+ * - Localhost → backend Express (Gemini + PDF del Estatuto)
+ * - Otros hosts → Gemini directo desde el navegador
+ */
+export async function sendMessage(
+  message: string,
+  history: Message[]
+): Promise<ChatResponse> {
+  if (IS_LOCAL) {
+    return callBackend(message, history);
   }
-
-  // 5. Fallback completo (sin clave API configurada)
-  if (localMatch) {
-    return {
-      text: `${localMatch.answer}\n\n*(Respuesta local verificada. Configure la API de Gemini para soporte de lenguaje natural asistido.)*`,
-      articlesCited: localMatch.articles,
-    };
-  }
-
-  return {
-    text: "El servicio de Inteligencia Artificial no está inicializado. Seleccione una de las preguntas sugeridas de la barra lateral para obtener una respuesta local verificada.",
-    articlesCited: undefined,
-  };
+  return callGeminiDirect(message, history);
 }
