@@ -1,0 +1,6 @@
+{
+  "name": "Chatbot del Estatuto Orgánico de la UASD",
+  "description": "Un chatbot web inteligente que utiliza Inteligencia Artificial para responder consultas basadas en el Estatuto Orgánico de la Universidad Autónoma de Santo Domingo (UASD).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
