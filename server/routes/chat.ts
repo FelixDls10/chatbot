@@ -10,6 +10,7 @@ import { GoogleGenAI } from "@google/genai";
 import { SUGGESTED_QUESTIONS, GROUNDED_ANSWERS } from "../../src/data/statuteKnowledge";
 import { SYSTEM_INSTRUCTION } from "../constants/systemPrompt";
 import { extractArticles } from "../utils/articleExtractor";
+import { getStatutePdfUri } from "../utils/pdfLoader";
 
 const router = Router();
 
@@ -47,6 +48,16 @@ interface LocalMatch {
   question: string;
   answer: string;
   articles: string[];
+}
+
+/** Parte de un mensaje Gemini: texto plano o referencia a archivo */
+type GeminiPart =
+  | { text: string }
+  | { fileData: { fileUri: string; mimeType: string } };
+
+interface GeminiContent {
+  role: string;
+  parts: GeminiPart[];
 }
 
 /* ── Handler principal ─────────────────────────────────────────────────── */
@@ -94,7 +105,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       : "";
 
     // 3. Convertir historial al formato de Gemini (máximo 10 mensajes previos)
-    const contents: { role: string; parts: { text: string }[] }[] = [];
+    const contents: GeminiContent[] = [];
 
     if (Array.isArray(history)) {
       history.slice(-10).forEach((msg) => {
@@ -115,6 +126,28 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     const aiClient = getAI();
     if (aiClient) {
       try {
+        // Obtener URI del PDF oficial (sube si no está cacheado)
+        const pdfUri = await getStatutePdfUri(aiClient);
+
+        // Insertar el PDF como primer contexto de la conversación
+        if (pdfUri) {
+          contents.unshift(
+            {
+              role: "model",
+              parts: [{ text: "Entendido. Tengo acceso al Estatuto Orgánico oficial de la UASD y lo usaré como única fuente para responder." }],
+            },
+            {
+              role: "user",
+              parts: [
+                { fileData: { fileUri: pdfUri, mimeType: "application/pdf" } },
+                { text: "Este es el Estatuto Orgánico oficial de la UASD. Úsalo como fuente principal para responder todas las consultas." },
+              ],
+            }
+          );
+        } else {
+          console.warn("⚠️  PDF no disponible; Gemini responderá sin documento adjunto.");
+        }
+
         const response = await aiClient.models.generateContent({
           model: "gemini-2.5-flash",
           contents,
