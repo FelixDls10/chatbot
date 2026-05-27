@@ -8,13 +8,23 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 import chatRouter from "./routes/chat";
+import { initGeminiClient } from "./utils/geminiClient";
 import { preloadStatutePdf } from "./utils/pdfLoader";
 
 // Cargar variables de entorno (.env.local tiene prioridad sobre .env)
 dotenv.config({ path: ".env.local" });
 dotenv.config();
+
+// Inicializar el cliente Gemini inmediatamente después de cargar el .env
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (GEMINI_API_KEY) {
+  const ai = initGeminiClient(GEMINI_API_KEY);
+  // Pre-cargar el PDF del Estatuto en segundo plano (no bloqueante)
+  preloadStatutePdf(ai);
+} else {
+  console.warn("⚠️  GEMINI_API_KEY no encontrada en .env / .env.local. El chatbot no podrá responder.");
+}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -44,15 +54,6 @@ async function startServer(): Promise<void> {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Servidor UASD Chatbot corriendo en http://localhost:${PORT}`);
-
-    // Pre-cargar el PDF del Estatuto en Gemini Files API (no bloqueante)
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
-      preloadStatutePdf(ai);
-    } else {
-      console.warn("⚠️  GEMINI_API_KEY no configurada — se omite la pre-carga del PDF.");
-    }
   });
 }
 
